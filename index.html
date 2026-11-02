@@ -248,6 +248,9 @@ textarea{min-height:110px;resize:vertical;line-height:1.45}
       <h3 id="notifyTitle">💬 Obavijest roditeljima</h3>
       <select id="notifyStudent"></select>
       <select id="notifyType">
+        <option value="pojedinacna">📌 Pojedinačna ocjena</option>
+        <option value="dnevni">📅 Dnevni izvještaj (ocjene jednog dana)</option>
+        <option value="period">🗓️ Ocjene za period (od – do)</option>
         <option value="izvjestaj">Izvještaj o radu (zadnje ocjene)</option>
         <option value="pohvala">Pohvala</option>
         <option value="poziv">Poziv na razgovor</option>
@@ -255,15 +258,27 @@ textarea{min-height:110px;resize:vertical;line-height:1.45}
         <option value="izostanak">Izostanak s nastave</option>
         <option value="roditeljski">Poziv na roditeljski sastanak</option>
       </select>
+      <div id="nfGradeBox" class="hidden"><label class="lbl" for="nfGrade">Ocjena koju šaljete</label><select id="nfGrade"></select></div>
+      <div id="nfDayBox" class="hidden"><label class="lbl" for="nfDay">Dan</label><input type="date" id="nfDay"></div>
+      <div id="nfPeriodBox" class="row hidden"><div><label class="lbl" for="nfFrom">Od</label><input type="date" id="nfFrom"></div><div><label class="lbl" for="nfTo">Do</label><input type="date" id="nfTo"></div></div>
       <p id="notifyPhone" class="muted"></p>
       <button class="btn" data-action="generateNotify">Generiši poruku</button>
       <textarea id="notifyMessage" placeholder="Poruka će se pojaviti ovdje – možete je slobodno izmijeniti."></textarea>
       <div class="row">
         <button class="btn btn-accent" data-action="viber">Viber</button>
         <button class="btn btn-ghost" data-action="sms">SMS</button>
+      </div>
+      <div class="row">
+        <button class="btn" style="background:#1565c0" data-action="emailNotify">✉️ Email</button>
         <button class="btn btn-success" data-action="copyNotify">Kopiraj</button>
       </div>
       <p class="muted" style="margin-top:6px">Poruka se automatski kopira prije otvaranja Vibera – ako se ne pojavi u razgovoru, samo je zalijepite.</p>
+    </div>
+    <div class="card">
+      <h3>📅 Ocijenjeni na dan</h3>
+      <p class="muted">Brzo slanje: učenici koji su tog dana dobili ocjenu ili bilješku. Dodirnite „Pripremi“ i poruka je spremna za slanje.</p>
+      <input type="date" id="todayDay">
+      <div id="todayList"></div>
     </div>
   </section>
 
@@ -276,6 +291,7 @@ textarea{min-height:110px;resize:vertical;line-height:1.45}
         <select id="studentGrade"></select>
         <input type="tel" id="studentPhone" placeholder="Broj roditelja (npr. 061...)">
       </div>
+      <input type="email" id="studentEmail" placeholder="Email roditelja (nije obavezno)">
       <label style="display:flex;align-items:center;gap:8px;margin:8px 0"><input type="checkbox" id="studentIP" style="width:auto;margin:0"> Individualni program (IP)</label>
       <button class="btn" data-action="saveStudent" id="studentSaveBtn">Dodaj</button>
       <button class="btn btn-ghost hidden" data-action="cancelEdit" id="studentCancelBtn">Odustani</button>
@@ -1760,21 +1776,52 @@ function renderNotify() {
   const c = data.settings.classOf;
   $('notifyTitle').textContent = c ? `💬 Obavijest roditeljima – ${RIM[c]} razred` : '💬 Obavijest roditeljima';
   fillSelect($('notifyStudent'), c ? studentOptions(`— Odaberi učenika ${RIM[c]} razreda —`, classStudents()) : '<option value="">U Postavkama odaberite razred kojem ste razrednica</option>');
-  updateNotifyPhone();
+  updateNotifyPhone(); renderTodayList();
 }
 function updateNotifyPhone() {
   const st = findStudent($('notifyStudent').value);
-  $('notifyPhone').textContent = !st ? '' : (st.phone ? `📞 +${normalizePhone(st.phone)}` : '⚠️ Nema broja roditelja – dodajte ga u kartici Učenici.');
+  $('notifyPhone').innerHTML = !st ? '' : [st.phone ? `📞 +${esc(normalizePhone(st.phone))}` : '⚠️ nema broja',
+    st.email ? `✉️ ${esc(st.email)}` : '✉️ nema emaila'].join(' &nbsp;·&nbsp; ') + (!st.phone || !st.email ? ' <span class="muted">(dodajte u kartici Učenici)</span>' : '');
+  updateNotifyType();
+}
+const stGrades = st => data.grades.filter(g => String(g.studentId) === String(st.id)).sort(byNewest);
+const kindTxt = g => g.kind && g.kind !== 'usmeno' && !g.topic.toLowerCase().includes(KINDS[g.kind].toLowerCase()) ? ', ' + KINDS[g.kind].toLowerCase() : '';
+const gradeLine = (g, noDate) => `• ${noDate ? '' : gradeDate(g) + ' | '}${g.subject}: ${g.value === 'biljeska' ? 'bilješka' : 'ocjena ' + g.value + ' (' + GRADE_WORD[g.value] + ')'}${kindTxt(g)} – ${g.topic}`;
+const GRADE_WORD = { 5:'odličan', 4:'vrlo dobar', 3:'dobar', 2:'dovoljan', 1:'nedovoljan' };
+function updateNotifyType() {
+  const t = $('notifyType').value, st = findStudent($('notifyStudent').value);
+  $('nfGradeBox').classList.toggle('hidden', t !== 'pojedinacna');
+  $('nfDayBox').classList.toggle('hidden', t !== 'dnevni');
+  $('nfPeriodBox').classList.toggle('hidden', t !== 'period');
+  if (!$('nfDay').value) $('nfDay').value = todayISO();
+  if (!$('nfTo').value) $('nfTo').value = todayISO();
+  if (!$('nfFrom').value) { const d = new Date(); d.setDate(d.getDate() - 7); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); $('nfFrom').value = d.toISOString().slice(0, 10); }
+  if (t === 'pojedinacna') {
+    const gr = st ? stGrades(st) : [];
+    fillSelect($('nfGrade'), gr.length ? gr.map(g => `<option value="${g.id}">${esc(gradeDate(g))} · ${esc(g.subject)} · ${g.value === 'biljeska' ? 'bilješka' : g.value}${g.kind && KIND_BADGE[g.kind] ? ' · ' + KIND_BADGE[g.kind] : ''} · ${esc(g.topic)}</option>`).join('') : '<option value="">Učenik još nema ocjena</option>');
+  }
 }
 function generateNotify() {
   const st = findStudent($('notifyStudent').value); if (!st) return toast('Odaberite učenika');
   const type = $('notifyType').value, uc = st.name;
   let msg = 'Poštovani roditelji,\n\n';
-  if (type === 'izvjestaj') {
+  if (type === 'pojedinacna') {
+    const g = data.grades.find(x => String(x.id) === $('nfGrade').value); if (!g) return toast('Odaberite ocjenu');
+    msg += g.value === 'biljeska'
+      ? `obavještavam Vas da je ${gradeDate(g)} za učenika/cu ${uc} iz predmeta ${g.subject} zabilježeno: ${g.topic}.\n`
+      : `obavještavam Vas da je ${uc} dana ${gradeDate(g)} iz predmeta ${g.subject} dobio/la ocjenu ${g.value} (${GRADE_WORD[g.value]})${g.kind && g.kind !== 'usmeno' ? ' – ' + KINDS[g.kind].toLowerCase() : ''}.\nNastavna jedinica / tema: ${g.topic}.\n`;
+  } else if (type === 'dnevni' || type === 'period') {
+    const from = type === 'dnevni' ? $('nfDay').value : $('nfFrom').value, to = type === 'dnevni' ? $('nfDay').value : $('nfTo').value;
+    if (!from || !to) return toast('Odaberite datum');
+    const gr = stGrades(st).filter(g => g.iso && g.iso >= from && g.iso <= to).reverse();
+    if (!gr.length) return toast(type === 'dnevni' ? 'Učenik nema unosa tog dana' : 'Učenik nema unosa u tom periodu');
+    msg += type === 'dnevni' ? `obavještavam Vas o ocjenama učenika/ce ${uc} za dan ${fmtDate(from)}:\n\n` : `obavještavam Vas o ocjenama učenika/ce ${uc} u periodu od ${fmtDate(from)} do ${fmtDate(to)}:\n\n`;
+    msg += gr.map(g => gradeLine(g, type === 'dnevni')).join('\n') + '\n';
+  } else if (type === 'izvjestaj') {
     msg += `obavještavam Vas o radu učenika/ce ${uc} (${RIM[st.grade]} razred).\n`;
     if (st.hasIP) msg += 'Učenik/ca radi prema individualnom prilagođenom programu.\n';
-    const gr = data.grades.filter(g => String(g.studentId) === String(st.id)).sort(byNewest).slice(0, 6);
-    msg += gr.length ? '\nZadnji unosi:\n' + gr.map(g => `• ${gradeDate(g)} | ${g.subject}: ${g.value === 'biljeska' ? 'bilješka' : 'ocjena ' + g.value}${g.kind && g.kind !== 'usmeno' ? ' (' + KINDS[g.kind].toLowerCase() + ')' : ''} – ${g.topic}`).join('\n') + '\n' : '\nU proteklom periodu nema novih ocjena.\n';
+    const gr = stGrades(st).slice(0, 6);
+    msg += gr.length ? '\nZadnji unosi:\n' + gr.map(g => gradeLine(g)).join('\n') + '\n' : '\nU proteklom periodu nema novih ocjena.\n';
   } else if (type === 'pohvala') msg += `s radošću Vas obavještavam da je ${uc} u posljednje vrijeme pokazao/la izuzetan trud i zalaganje. Molim Vas da ga/je pohvalite i kod kuće.\n`;
   else if (type === 'poziv') msg += `molim Vas da dođete na razgovor u vezi s radom i vladanjem učenika/ce ${uc}. Javite mi koji Vam termin odgovara.\n`;
   else if (type === 'zadaca') msg += `obavještavam Vas da ${uc} nije uradio/la domaću zadaću / nije imao/la potreban pribor. Molim Vas da pratite izvršavanje obaveza kod kuće.\n`;
@@ -1782,6 +1829,23 @@ function generateNotify() {
   else if (type === 'roditeljski') msg += `pozivam Vas na roditeljski sastanak ${RIM[st.grade]} razreda koji će se održati ____________ u ______ sati u učionici razreda. Vaše prisustvo je važno.\n`;
   msg += `\nS poštovanjem,\n${data.settings.teacher}, razrednica ${RIM[st.grade]} razreda\n${data.settings.school}`;
   $('notifyMessage').value = msg;
+}
+const SUBJECTS_MAIL = { pojedinacna:'Obavijest o ocjeni', dnevni:'Dnevni izvještaj o ocjenama', period:'Izvještaj o ocjenama', izvjestaj:'Izvještaj o radu učenika', pohvala:'Pohvala', poziv:'Poziv na razgovor', zadaca:'Obavijest o domaćoj zadaći', izostanak:'Obavijest o izostanku', roditeljski:'Poziv na roditeljski sastanak' };
+function sendEmail() {
+  const text = $('notifyMessage').value.trim(); if (!text) return toast('Prvo generišite ili napišite poruku');
+  const st = findStudent($('notifyStudent').value);
+  if (st && !st.email) toast('Učenik nema upisan email roditelja – adresu upišite u aplikaciji za email', 3500);
+  const subj = `${SUBJECTS_MAIL[$('notifyType').value] || 'Obavijest'}${st ? ' – ' + st.name : ''}`;
+  window.location.href = `mailto:${st?.email ? encodeURIComponent(st.email) : ''}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(text)}`;
+}
+function renderTodayList() {
+  const day = $('todayDay').value || todayISO(); $('todayDay').value = day;
+  const ids = new Set(classStudents().map(s => String(s.id)));
+  const by = {};
+  data.grades.filter(g => g.iso === day && ids.has(String(g.studentId))).forEach(g => (by[g.studentId] = by[g.studentId] || []).push(g));
+  $('todayList').innerHTML = Object.entries(by).map(([id, gs]) => { const st = findStudent(id);
+    return `<div class="entry"><div class="grow"><b>${esc(st?.name || '')}</b><br><span class="muted">${gs.map(g => `${esc(g.subject)}: ${g.value === 'biljeska' ? 'B' : g.value}`).join(' · ')}</span></div><button class="btn btn-small" data-action="prepDay" data-id="${esc(id)}">Pripremi</button></div>`;
+  }).join('') || '<p class="muted">Nema ocjena tog dana.</p>';
 }
 async function sendViber() {
   const text = $('notifyMessage').value.trim(); if (!text) return toast('Prvo generišite ili napišite poruku');
@@ -1801,24 +1865,24 @@ function renderStudents() {
   const groups = {};
   sortedStudents().forEach(s => (groups[s.grade] = groups[s.grade] || []).push(s));
   $('studentsList').innerHTML = Object.entries(groups).map(([g, list]) => `<div class="card" style="--c:#e0a100"><h3>${RIM[g] || g} razred <span class="badge">${list.length}</span></h3>
-    ${list.map(s => `<div class="entry"><div class="grow"><b>${esc(s.name)}</b> ${s.hasIP ? '<span class="badge badge-ip">IP</span>' : ''}<br><span class="muted">${s.phone ? '📞 +' + esc(normalizePhone(s.phone)) : 'bez broja'}</span></div>
+    ${list.map(s => `<div class="entry"><div class="grow"><b>${esc(s.name)}</b> ${s.hasIP ? '<span class="badge badge-ip">IP</span>' : ''}<br><span class="muted">${s.phone ? '📞 +' + esc(normalizePhone(s.phone)) : 'bez broja'}${s.email ? ' · ✉️ ' + esc(s.email) : ''}</span></div>
     <button class="btn btn-small btn-ghost" data-action="editStudent" data-id="${esc(s.id)}">Uredi</button><button class="btn-x" data-action="delStudent" data-id="${esc(s.id)}">✕</button></div>`).join('')}</div>`).join('') || '<div class="card muted">Nema učenika.</div>';
 }
 function saveStudent() {
   const name = $('studentName').value.trim(); if (!name) return toast('Unesite ime i prezime');
-  const vals = { name, grade: $('studentGrade').value, phone: $('studentPhone').value.trim(), hasIP: $('studentIP').checked };
+  const vals = { name, grade: $('studentGrade').value, phone: $('studentPhone').value.trim(), email: $('studentEmail').value.trim(), hasIP: $('studentIP').checked };
   if (editingStudentId != null) { Object.assign(findStudent(editingStudentId), vals); toast('Izmjene sačuvane ✓'); }
   else { data.students.push({ id: Date.now(), ...vals }); toast('Učenik dodan ✓'); }
   saveData(); cancelEdit(); renderStudents();
 }
 function editStudent(id) {
   const s = findStudent(id); if (!s) return; editingStudentId = s.id;
-  $('studentName').value = s.name; $('studentGrade').value = s.grade; $('studentPhone').value = s.phone || ''; $('studentIP').checked = !!s.hasIP;
+  $('studentName').value = s.name; $('studentGrade').value = s.grade; $('studentPhone').value = s.phone || ''; $('studentEmail').value = s.email || ''; $('studentIP').checked = !!s.hasIP;
   $('studentFormTitle').textContent = '👧 Uredi učenika'; $('studentSaveBtn').textContent = 'Sačuvaj izmjene'; $('studentCancelBtn').classList.remove('hidden');
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 function cancelEdit() {
-  editingStudentId = null; $('studentName').value = ''; $('studentPhone').value = ''; $('studentIP').checked = false;
+  editingStudentId = null; $('studentName').value = ''; $('studentPhone').value = ''; $('studentEmail').value = ''; $('studentIP').checked = false;
   $('studentFormTitle').textContent = '👧 Dodaj učenika'; $('studentSaveBtn').textContent = 'Dodaj'; $('studentCancelBtn').classList.add('hidden');
 }
 function delStudent(id) {
@@ -1908,7 +1972,8 @@ const ACTIONS = {
   wordIPYear: () => { const st = findStudent($('ipStudent').value); if (!st || !ipKey(st)) return toast('Nema uvezenog programa'); downloadDoc(`IP ${ipKey(st)} - cijela godina`, ipYearHTML(st), true); },
   printIP: () => { const h = $('ipDoc').querySelector('.doc'); if (!h) return toast('Nema dokumenta za štampu'); printHTML(h.outerHTML, true); },
   addGrade, delGrade: d => delGrade(d.id),
-  generateNotify, viber: sendViber, sms: sendSMS,
+  generateNotify, viber: sendViber, sms: sendSMS, emailNotify: sendEmail,
+  prepDay: d => { $('notifyStudent').value = d.id; $('notifyType').value = 'dnevni'; $('nfDay').value = $('todayDay').value; updateNotifyPhone(); generateNotify(); window.scrollTo({ top: 0, behavior: 'smooth' }); },
   copyNotify: async () => { const t = $('notifyMessage').value; if (!t.trim()) return toast('Poruka je prazna'); toast(await copyText(t) ? 'Kopirano ✓' : 'Kopiranje nije uspjelo'); },
   saveStudent, cancelEdit, editStudent: d => editStudent(d.id), delStudent: d => delStudent(d.id),
   openPrepKey: d => { const [r, m, n] = d.key.split('|'); openPrep(r, m, +n); },
@@ -1937,6 +2002,8 @@ function start() {
   $('gradeValue').addEventListener('change', () => { updateKindVisibility(); $('gradeTopic').placeholder = $('gradeValue').value === 'biljeska' ? 'Tekst bilješke (npr. aktivan na času)' : 'Nastavna jedinica'; });
   $('progStudent').addEventListener('change', renderProgress);
   $('notifyStudent').addEventListener('change', () => { updateNotifyPhone(); $('notifyMessage').value = ''; });
+  $('notifyType').addEventListener('change', () => { updateNotifyType(); $('notifyMessage').value = ''; });
+  $('todayDay').addEventListener('change', renderTodayList);
   $('archiveSearch').addEventListener('input', renderArchive);
   $('importFile').addEventListener('change', importData);
   document.addEventListener('input', e => {
