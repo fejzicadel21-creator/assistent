@@ -111,6 +111,7 @@ textarea{min-height:110px;resize:vertical;line-height:1.45}
     <button class="tab" data-section="planovi" style="--c:#2bb3c0">🗓️ Planovi</button>
     <button class="tab" data-section="prilagodjeni" style="--c:#ff7a59">🧩 Prilagođeni</button>
     <button class="tab" data-section="dnevnik" style="--c:#ff6fa5">📒 Dnevnik</button>
+    <button class="tab" data-section="izostanci" style="--c:#e0475b">🚫 Izostanci</button>
     <button class="tab" data-section="progres" style="--c:#21a366">📈 Napredak</button>
     <button class="tab" data-section="obavijesti" style="--c:#8f5ff2">💬 Obavijesti</button>
     <button class="tab" data-section="ucenici" style="--c:#e0a100">👧 Učenici</button>
@@ -230,9 +231,56 @@ textarea{min-height:110px;resize:vertical;line-height:1.45}
       <button class="btn" data-action="addGrade">Sačuvaj</button>
     </div>
     <div class="card">
+      <h3>📚 Predmeti (povezani s ocjenama i napretkom)</h3>
+      <p class="muted">Dodajte predmete koje unosite kao razrednica. Ocjene i napredak se automatski grupišu po predmetima.</p>
+      <div class="row">
+        <input type="text" id="newSubject" placeholder="npr. Historija, Geografija, Informatika…">
+        <button class="btn btn-small" data-action="addSubject">➕ Dodaj predmet</button>
+      </div>
+      <div id="subjectsList" style="margin-top:10px"></div>
+    </div>
+    <div class="card">
       <h3>Zadnji unosi</h3>
       <select id="gradeFilter"></select>
       <div id="gradesList"></div>
+    </div>
+  </section>
+
+  <!-- IZOSTANCI -->
+  <section id="section-izostanci" class="section hidden" style="--c:#e0475b">
+    <div class="card">
+      <h3>🚫 Unos izostanka</h3>
+      <select id="absRazred"></select>
+      <select id="absStudent"></select>
+      <div class="row">
+        <input type="date" id="absDate">
+        <select id="absType">
+          <option value="neopravdan">Neopravdan</option>
+          <option value="opravdan">Opravdan</option>
+          <option value="kasnjenje">Kašnjenje</option>
+        </select>
+      </div>
+      <input type="text" id="absReason" placeholder="Razlog (npr. bolest, porodični razlozi…)">
+      <button class="btn" data-action="addAbsence">Sačuvaj izostanak</button>
+    </div>
+    <div class="card">
+      <h3>📅 Pregled izostanaka</h3>
+      <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:8px">
+        <button class="btn btn-small" data-action="absView" data-view="dan">Dan</button>
+        <button class="btn btn-small" data-action="absView" data-view="sedmica">Sedmica</button>
+        <button class="btn btn-small" data-action="absView" data-view="mjesec">Mjesec</button>
+        <button class="btn btn-small btn-ghost" data-action="printAbsences">🖨 Štampaj</button>
+      </div>
+      <div class="row">
+        <input type="date" id="absViewDate">
+        <select id="absFilterStudent"></select>
+      </div>
+      <div id="absencesList" style="margin-top:10px"></div>
+    </div>
+    <div class="card">
+      <h3>💬 Brza obavijest roditelju</h3>
+      <p class="muted">Odaberite učenika i dan, pa generišite poruku o izostanku (šalje se iz kartice Obavijesti).</p>
+      <button class="btn btn-accent" data-action="absNotify">Pripremi obavijest za odabranog učenika</button>
     </div>
   </section>
 
@@ -1511,7 +1559,7 @@ const KINDS = { usmeno:'Usmeno / ostalo', pv:'Pismena vježba', pz:'Školska pis
 const KIND_BADGE = { pv:'✍️ PV', pz:'📝 PZ', test:'🧪 Test', dz:'🏠 DZ' };
 
 function defaults() {
-  return { students: [], grades: [], preps: {}, preps2: {}, subjects: [...DEFAULT_SUBJECTS], ipNotes: {}, customUnits: {}, plans: {}, ipPrograms: { profiles: {}, months: {} }, settings: { ...DEFAULT_SETTINGS } };
+  return { students: [], grades: [], absences: [], preps: {}, preps2: {}, subjects: [...DEFAULT_SUBJECTS], ipNotes: {}, customUnits: {}, plans: {}, ipPrograms: { profiles: {}, months: {} }, settings: { ...DEFAULT_SETTINGS } };
 }
 let data = defaults();
 function loadData() {
@@ -1521,7 +1569,7 @@ function loadData() {
 }
 function normalize() {
   const d = defaults();
-  ['students','grades','subjects'].forEach(k => { if (!Array.isArray(data[k])) data[k] = d[k]; });
+  ['students','grades','absences','subjects'].forEach(k => { if (!Array.isArray(data[k])) data[k] = d[k]; });
   ['preps','preps2','ipNotes','customUnits','plans'].forEach(k => { if (!data[k] || typeof data[k] !== 'object' || Array.isArray(data[k])) data[k] = {}; });
   data.settings = Object.assign({ ...DEFAULT_SETTINGS }, data.settings || {});
   if (data.settings.school === 'OŠ Kiseljak Tuzla') data.settings.school = DEFAULT_SETTINGS.school;
@@ -1537,7 +1585,9 @@ const razOpts = list => list.map(r => `<option value="${r}">${RIM[r] || r} razre
 function fillRazredSelects() {
   const rs = razredi();
   ['prepRazred','planRazred'].forEach(id => fillSelect($(id), razOpts(rs.filter(r => PLAN[r]))));
-  fillSelect($('gradeRazred'), razOpts(uniq(data.students.map(s => s.grade)).sort((a, b) => +a - +b)) || '<option value="">Nema učenika</option>');
+  const gradeOpts = razOpts(uniq(data.students.map(s => s.grade)).sort((a, b) => +a - +b)) || '<option value="">Nema učenika</option>';
+  fillSelect($('gradeRazred'), gradeOpts);
+  if ($('absRazred')) fillSelect($('absRazred'), gradeOpts);
   const all = ['1','2','3','4','5','6','7','8','9'];
   fillSelect($('studentGrade'), razOpts(all)); fillSelect($('importRazred'), razOpts(all)); fillSelect($('setClassOf'), '<option value="">— nisam razrednica —</option>' + razOpts(all));
   if (!$('studentGrade').value || $('studentGrade').value === '1') $('studentGrade').value = rs[0] || '5';
@@ -1576,7 +1626,7 @@ function showSection(name) {
   renderSection(name); window.scrollTo(0, 0);
 }
 function renderSection(name) {
-  ({ pripreme: renderUnits, planovi: renderPlan, prilagodjeni: renderIP, dnevnik: renderDnevnik, progres: renderProgressSelect,
+  ({ pripreme: renderUnits, planovi: renderPlan, prilagodjeni: renderIP, dnevnik: renderDnevnik, izostanci: renderIzostanci, progres: renderProgressSelect,
      obavijesti: renderNotify, ucenici: renderStudents, arhiva: renderArchive })[name]?.();
 }
 
@@ -1726,7 +1776,7 @@ function renderDnevnik() {
   $('subjectNote').textContent = isClassOf(r) ? `Razrednica ste ${RIM[r]} razreda – možete unositi ocjene iz svih predmeta.` : 'Za ovaj razred unosite samo ocjene iz Bosanskog jezika.';
   fillSelect($('gradeFilter'), studentOptions(`Svi učenici ${RIM[r] || ''} razreda`, list));
   if (!$('gradeDate').value) $('gradeDate').value = todayISO();
-  updateKindVisibility(); updateUnitOptions(); renderGradeList();
+  updateKindVisibility(); updateUnitOptions(); renderGradeList(); renderSubjectsList();
 }
 function updateKindVisibility() { $('gradeKind').classList.toggle('hidden', $('gradeValue').value === 'biljeska'); }
 function updateUnitOptions() {
@@ -1752,6 +1802,170 @@ function addGrade() {
   saveData(); $('gradeTopic').value = ''; renderGradeList(); toast('Sačuvano ✓');
 }
 function delGrade(id) { if (!confirm('Obrisati ovaj unos?')) return; data.grades = data.grades.filter(g => String(g.id) !== String(id)); saveData(); renderGradeList(); }
+
+function renderSubjectsList() {
+  const el = $('subjectsList');
+  if (!el) return;
+  if (!data.subjects.length) { el.innerHTML = '<p class="muted">Nema predmeta. Dodajte prvi.</p>'; return; }
+  el.innerHTML = data.subjects.map((s, i) => {
+    const n = data.grades.filter(g => g.subject === s).length;
+    return `<div class="entry"><div class="grow"><b>${esc(s)}</b> <span class="muted">· ${n} unosa</span></div>
+      <button class="btn-x" data-action="delSubject" data-i="${i}" title="Ukloni predmet">✕</button></div>`;
+  }).join('');
+}
+function addSubject() {
+  const name = ($('newSubject')?.value || '').trim();
+  if (!name) return toast('Upišite naziv predmeta');
+  if (data.subjects.some(s => s.toLowerCase() === name.toLowerCase())) return toast('Predmet već postoji');
+  data.subjects.push(name);
+  saveData();
+  if ($('newSubject')) $('newSubject').value = '';
+  renderSubjectsList();
+  if (currentSection === 'dnevnik') renderDnevnik();
+  toast('Predmet dodan ✓');
+}
+function delSubject(i) {
+  const s = data.subjects[i];
+  if (!s) return;
+  const n = data.grades.filter(g => g.subject === s).length;
+  if (!confirm(`Ukloniti predmet „${s}”?${n ? `\nPostoji ${n} ocjena/bilješki s tim predmetom – ostaju u dnevniku, ali predmet više neće biti u listi.` : ''}`)) return;
+  data.subjects.splice(i, 1);
+  saveData();
+  renderSubjectsList();
+  if (currentSection === 'dnevnik') renderDnevnik();
+  toast('Predmet uklonjen');
+}
+
+/* ===================== IZOSTANCI ===================== */
+let absViewMode = 'dan';
+function renderIzostanci() {
+  fillRazredSelects();
+  const rSel = $('absRazred'), stSel = $('absStudent'), fSel = $('absFilterStudent');
+  if (!rSel) return;
+  // sync razred options same as others
+  const r = rSel.value || data.settings.classOf || '7';
+  if (!rSel.value) rSel.value = r;
+  const list = data.students.filter(s => s.grade === rSel.value);
+  fillSelect(stSel, studentOptions(list.length ? '— Odaberi učenika —' : 'Nema učenika', list));
+  fillSelect(fSel, studentOptions(`Svi učenici ${RIM[rSel.value] || ''} razreda`, list));
+  if (!$('absDate').value) $('absDate').value = todayISO();
+  if (!$('absViewDate').value) $('absViewDate').value = todayISO();
+  renderAbsencesList();
+}
+function addAbsence() {
+  const studentId = $('absStudent')?.value;
+  if (!studentId) return toast('Odaberite učenika');
+  const iso = $('absDate')?.value || todayISO();
+  const type = $('absType')?.value || 'neopravdan';
+  const reason = ($('absReason')?.value || '').trim();
+  const st = findStudent(studentId);
+  data.absences.push({ id: Date.now(), studentId: st.id, iso, date: fmtDate(iso), type, reason, created: todayISO() });
+  saveData();
+  if ($('absReason')) $('absReason').value = '';
+  renderAbsencesList();
+  toast('Izostanak sačuvan ✓');
+}
+function delAbsence(id) {
+  if (!confirm('Obrisati ovaj izostanak?')) return;
+  data.absences = data.absences.filter(a => String(a.id) !== String(id));
+  saveData();
+  renderAbsencesList();
+}
+function setAbsView(view) {
+  absViewMode = view || 'dan';
+  renderAbsencesList();
+}
+function absRange() {
+  const d = $('absViewDate')?.value || todayISO();
+  const base = new Date(d + 'T12:00:00');
+  if (absViewMode === 'dan') {
+    return { from: d, to: d, label: fmtDate(d) };
+  }
+  if (absViewMode === 'sedmica') {
+    const day = base.getDay() || 7; // Mon=1..Sun=7
+    const mon = new Date(base); mon.setDate(base.getDate() - (day - 1));
+    const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+    const f = mon.toISOString().slice(0, 10), t = sun.toISOString().slice(0, 10);
+    return { from: f, to: t, label: `${fmtDate(f)} – ${fmtDate(t)}` };
+  }
+  // mjesec
+  const y = base.getFullYear(), m = base.getMonth();
+  const f = `${y}-${String(m + 1).padStart(2, '0')}-01`;
+  const last = new Date(y, m + 1, 0);
+  const t = last.toISOString().slice(0, 10);
+  return { from: f, to: t, label: monthLabel(['januar','februar','mart','april','maj','juni','juli','avgust','septembar','oktobar','novembar','decembar'][m]) + ' ' + y };
+}
+function renderAbsencesList() {
+  const el = $('absencesList');
+  if (!el) return;
+  const r = $('absRazred')?.value;
+  const fid = $('absFilterStudent')?.value;
+  const ids = new Set(data.students.filter(s => s.grade === r).map(s => String(s.id)));
+  const { from, to, label } = absRange();
+  let list = (data.absences || []).filter(a => {
+    if (!ids.has(String(a.studentId))) return false;
+    if (fid && String(a.studentId) !== fid) return false;
+    return a.iso >= from && a.iso <= to;
+  }).sort((a, b) => b.iso.localeCompare(a.iso) || b.id - a.id);
+
+  const typeLabel = { neopravdan: 'Neopravdan', opravdan: 'Opravdan', kasnjenje: 'Kašnjenje' };
+  const typeBadge = t => {
+    const c = t === 'opravdan' ? 'var(--success)' : t === 'kasnjenje' ? 'var(--yellow)' : 'var(--danger)';
+    return `<span class="badge" style="background:${c};color:#fff">${typeLabel[t] || t}</span>`;
+  };
+
+  // summary
+  const byType = {};
+  list.forEach(a => { byType[a.type] = (byType[a.type] || 0) + 1; });
+  const summary = Object.entries(byType).map(([t, n]) => `${typeLabel[t] || t}: <b>${n}</b>`).join(' · ') || 'nema';
+
+  let html = `<p class="muted" style="margin-bottom:8px"><b>${esc(label)}</b> · ${list.length} izostanaka · ${summary}</p>`;
+  if (!list.length) {
+    html += '<p class="muted">Nema izostanaka u ovom periodu.</p>';
+  } else {
+    html += list.map(a => {
+      const st = findStudent(a.studentId);
+      return `<div class="entry">${typeBadge(a.type)}<div class="grow"><b>${esc(st?.name || 'Obrisan')}</b>${st?.hasIP ? ' <span class="badge badge-ip">IP</span>' : ''}<br>
+        <span class="muted">${esc(a.date || a.iso)}${a.reason ? ' · ' + esc(a.reason) : ''}</span></div>
+        <button class="btn-x" data-action="delAbsence" data-id="${a.id}">✕</button></div>`;
+    }).join('');
+  }
+  el.innerHTML = html;
+}
+function absencesPrintHTML() {
+  const r = $('absRazred')?.value;
+  const { from, to, label } = absRange();
+  const ids = new Set(data.students.filter(s => s.grade === r).map(s => String(s.id)));
+  const fid = $('absFilterStudent')?.value;
+  let list = (data.absences || []).filter(a => {
+    if (!ids.has(String(a.studentId))) return false;
+    if (fid && String(a.studentId) !== fid) return false;
+    return a.iso >= from && a.iso <= to;
+  }).sort((a, b) => a.iso.localeCompare(b.iso) || a.id - b.id);
+  const typeLabel = { neopravdan: 'Neopravdan', opravdan: 'Opravdan', kasnjenje: 'Kašnjenje' };
+  const rows = list.map(a => {
+    const st = findStudent(a.studentId);
+    return `<tr><td>${esc(a.date || a.iso)}</td><td>${esc(st?.name || '')}</td><td>${esc(typeLabel[a.type] || a.type)}</td><td>${esc(a.reason || '')}</td></tr>`;
+  }).join('') || '<tr><td colspan="4">Nema podataka</td></tr>';
+  return `<div class="doc"><h2 class="doc-c">Izostanci – ${esc(RIM[r] || r)} razred</h2>
+    <p class="doc-c">${esc(data.settings.school)} · ${esc(data.settings.year)}</p>
+    <p><b>Period:</b> ${esc(label)}</p>
+    <table class="t"><thead><tr><th>Datum</th><th>Učenik</th><th>Vrsta</th><th>Razlog</th></tr></thead><tbody>${rows}</tbody></table>
+    <div class="sign"><div>Datum: ${fmtDate(todayISO())}</div><div>${esc(data.settings.teacher)}</div></div></div>`;
+}
+function printAbsences() {
+  printHTML(absencesPrintHTML(), true);
+}
+function absNotify() {
+  const st = findStudent($('absStudent')?.value);
+  if (!st) return toast('Odaberite učenika u unosu izostanka');
+  showSection('obavijesti');
+  $('notifyStudent').value = st.id;
+  $('notifyType').value = 'izostanak';
+  updateNotifyPhone();
+  generateNotify();
+  toast('Poruka spremna u Obavijestima');
+}
 
 /* ===================== NAPREDAK ===================== */
 function renderProgressSelect() { fillSelect($('progStudent'), studentOptions()); renderProgress(); }
@@ -1891,6 +2105,7 @@ function delStudent(id) {
   if (!confirm(`Obrisati učenika ${s.name}?${n ? `\nBiće obrisano i ${n} unosa iz dnevnika.` : ''}`)) return;
   data.students = data.students.filter(x => String(x.id) !== String(id));
   data.grades = data.grades.filter(g => String(g.studentId) !== String(id));
+  data.absences = (data.absences || []).filter(a => String(a.studentId) !== String(id));
   Object.keys(data.ipNotes).forEach(k => { if (k.startsWith(String(id) + '|')) delete data.ipNotes[k]; });
   if (String(editingStudentId) === String(id)) cancelEdit();
   saveData(); renderStudents();
@@ -1972,6 +2187,10 @@ const ACTIONS = {
   wordIPYear: () => { const st = findStudent($('ipStudent').value); if (!st || !ipKey(st)) return toast('Nema uvezenog programa'); downloadDoc(`IP ${ipKey(st)} - cijela godina`, ipYearHTML(st), true); },
   printIP: () => { const h = $('ipDoc').querySelector('.doc'); if (!h) return toast('Nema dokumenta za štampu'); printHTML(h.outerHTML, true); },
   addGrade, delGrade: d => delGrade(d.id),
+  addSubject, delSubject: d => delSubject(+d.i),
+  addAbsence, delAbsence: d => delAbsence(d.id),
+  absView: d => setAbsView(d.view),
+  printAbsences, absNotify,
   generateNotify, viber: sendViber, sms: sendSMS, emailNotify: sendEmail,
   prepDay: d => { $('notifyStudent').value = d.id; $('notifyType').value = 'dnevni'; $('nfDay').value = $('todayDay').value; updateNotifyPhone(); generateNotify(); window.scrollTo({ top: 0, behavior: 'smooth' }); },
   copyNotify: async () => { const t = $('notifyMessage').value; if (!t.trim()) return toast('Poruka je prazna'); toast(await copyText(t) ? 'Kopirano ✓' : 'Kopiranje nije uspjelo'); },
@@ -2001,6 +2220,9 @@ function start() {
   $('gradeFilter').addEventListener('change', renderGradeList); $('gradeRazred').addEventListener('change', () => { $('gradeFilter').value = ''; renderDnevnik(); });
   $('gradeValue').addEventListener('change', () => { updateKindVisibility(); $('gradeTopic').placeholder = $('gradeValue').value === 'biljeska' ? 'Tekst bilješke (npr. aktivan na času)' : 'Nastavna jedinica'; });
   $('progStudent').addEventListener('change', renderProgress);
+  $('absRazred')?.addEventListener('change', () => { renderIzostanci(); });
+  $('absFilterStudent')?.addEventListener('change', renderAbsencesList);
+  $('absViewDate')?.addEventListener('change', renderAbsencesList);
   $('notifyStudent').addEventListener('change', () => { updateNotifyPhone(); $('notifyMessage').value = ''; });
   $('notifyType').addEventListener('change', () => { updateNotifyType(); $('notifyMessage').value = ''; });
   $('todayDay').addEventListener('change', renderTodayList);
